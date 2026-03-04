@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>HỆ THỐNG THI PCCC - Design by Đội 2</title>
+
+<style>
+body{
+    margin:0;
+    font-family:"Segoe UI",Arial;
+    min-height:100vh;
+    position:relative;
+}
+body::before{
+    content:"";
+    position:fixed;
+    width:100%;
+    height:100%;
+    background:url("pccc-bg.png") center/cover no-repeat;
+    filter:blur(6px) brightness(0.5);
+    z-index:-2;
+}
+body::after{
+    content:"";
+    position:fixed;
+    width:100%;
+    height:100%;
+    background:linear-gradient(to bottom, rgba(178,34,34,0.4), rgba(0,0,0,0.6));
+    z-index:-1;
+}
+.header{
+    background:#8b0000;
+    color:white;
+    padding:15px 30px;
+    display:flex;
+    align-items:center;
+}
+.header img{
+    height:60px;
+    margin-right:20px;
+}
+.container{
+    width:950px;
+    max-width:95%;
+    margin:40px auto;
+    background:rgba(255,255,255,0.97);
+    padding:35px;
+    border-radius:15px;
+    box-shadow:0 0 30px rgba(0,0,0,0.5);
+    box-sizing:border-box;
+}
+h2{text-align:center;color:#b22222;}
+input,select{
+    width:100%;
+    padding:10px;
+    margin:8px 0;
+    border-radius:8px;
+    border:1px solid #ccc;
+    box-sizing:border-box;
+}
+button{
+    padding:10px 18px;
+    background:#b22222;
+    color:white;
+    border:none;
+    border-radius:8px;
+    cursor:pointer;
+    margin-top:10px;
+    margin-right:8px;
+    font-weight:bold;
+}
+button:hover{background:#8b0000;}
+.option{
+    margin:10px 0;
+    padding:12px;
+    border:1px solid #ccc;
+    border-radius:8px;
+    cursor:pointer;
+    transition:0.2s;
+}
+.option:hover{
+    background:#f7f7f7;
+}
+.option.selected{
+    background:#d4edda;
+    border:2px solid #28a745;
+    font-weight:bold;
+}
+#timer{color:red;font-weight:bold;}
+table{
+    width:100%;
+    border-collapse:collapse;
+    margin-top:15px;
+}
+th,td{
+    border:1px solid #ccc;
+    padding:8px;
+    text-align:center;
+}
+th{
+    background:#b22222;
+    color:white;
+}
+.footer{
+    text-align:center;
+    padding:15px;
+    color:white;
+    background:#111;
+    margin-top:40px;
+}
+.box{
+    padding:12px;
+    border-radius:8px;
+    margin:10px 0;
+    line-height:1.6;
+}
+.info{
+    background:#e7f3ff;
+    border:1px solid #b6d4fe;
+    color:#084298;
+}
+.warn{
+    background:#fff3cd;
+    border:1px solid #ffecb5;
+    color:#664d03;
+}
+.ok{
+    background:#d1e7dd;
+    border:1px solid #badbcc;
+    color:#0f5132;
+}
+.hidden{
+    display:none;
+}
+.nav-buttons{
+    display:flex;
+    gap:10px;
+    flex-wrap:wrap;
+    margin-top:15px;
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+    <img src="logo-pccc.png" alt="Logo PCCC">
+    <h1>HỆ THỐNG THI TRẮC NGHIỆM NGHIỆP VỤ KIỂM TRA PCCC</h1>
+</div>
+
+<div class="container" id="main"></div>
+
+<div class="footer">
+© 2026 Hệ thống thi nội bộ Phòng Cảnh sát PCCC và CNCH, Công an tỉnh Quảng Ninh - Design by Đội 2
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+
+<script>
+const ADMIN_PASSWORD = "101212019";
+const EXCEL_FILE = "questions.xlsx";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzaqVDw-5wI6R9Ve0eRmk9Swa0qrcpwjfARKWCIAmMaa8jP4lhlCsHk6Uvf-5lbl1ij/exec";
+const QUESTIONS_PER_EXAM = 20;
+const EXAM_TIME = 20 * 60;
+
+let allQuestions = [];
+let cachedQuestions = JSON.parse(localStorage.getItem("cachedQuestions")) || [];
+
+let current = 0;
+let score = 0;
+let timeLeft = EXAM_TIME;
+let timer = null;
+let startTime = null;
+let examQuestions = [];
+let userAnswers = [];
+let userName = "";
+let userUnit = "";
+let selectedAnswer = null;
+let questionSourceText = "Chưa tải bộ câu hỏi";
+
+async function bootApp(){
+    await loadPublicQuestions();
+    home();
+}
+
+function saveQuestionCache(){
+    localStorage.setItem("cachedQuestions", JSON.stringify(allQuestions));
+}
+
+function clearQuestionCache(){
+    localStorage.removeItem("cachedQuestions");
+    cachedQuestions = [];
+    allQuestions = [];
+}
+
+function home(){
+    let statusHtml = "";
+
+    if(allQuestions.length >= QUESTIONS_PER_EXAM){
+        statusHtml = `
+            <div class="box ok">
+                Hệ thống đã sẵn sàng bộ câu hỏi: <strong>${allQuestions.length}</strong> câu.<br>
+                Nguồn dữ liệu: <strong>${questionSourceText}</strong>
+            </div>
+        `;
+    }else{
+        statusHtml = `
+            <div class="box warn">
+                Chưa tải được bộ câu hỏi công khai.<br>
+                ${questionSourceText}
+            </div>
+        `;
+    }
+
+    main.innerHTML = `
+        <h2>TRUY CẬP HỆ THỐNG</h2>
+        ${statusHtml}
+        <button onclick="studentLogin()">THÍ SINH</button>
+        <button onclick="adminLogin()">QUẢN TRỊ</button>
+    `;
+}
+
+async function loadPublicQuestions(){
+    try{
+        const ok = await loadQuestionsByFetch();
+        if(ok){
+            questionSourceText = "File công khai questions.xlsx";
+            return true;
+        }
+
+        if(cachedQuestions.length >= QUESTIONS_PER_EXAM){
+            allQuestions = cachedQuestions;
+            questionSourceText = "Bộ câu hỏi cache cục bộ trên máy này";
+            return true;
+        }
+
+        questionSourceText = "Không tìm thấy file questions.xlsx hoặc file chưa đúng định dạng";
+        return false;
+    }catch(err){
+        console.error(err);
+        if(cachedQuestions.length >= QUESTIONS_PER_EXAM){
+            allQuestions = cachedQuestions;
+            questionSourceText = "Bộ câu hỏi cache cục bộ trên máy này";
+            return true;
+        }
+        questionSourceText = "Lỗi khi tải file questions.xlsx";
+        return false;
+    }
+}
+
+async function loadQuestionsByFetch(){
+    try{
+        const response = await fetch(EXCEL_FILE + "?v=" + Date.now(), { cache: "no-store" });
+        if(!response.ok) throw new Error("Không đọc được file công khai");
+        const arrayBuffer = await response.arrayBuffer();
+        const ok = parseExcelArrayBuffer(arrayBuffer);
+        if(ok){
+            saveQuestionCache();
+            cachedQuestions = allQuestions;
+        }
+        return ok;
+    }catch(err){
+        console.error(err);
+        return false;
+    }
+}
+
+function parseExcelArrayBuffer(arrayBuffer){
+    try{
+        const workbook = XLSX.read(arrayBuffer, { type: "array" });
+        const firstSheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[firstSheetName];
+        const raw = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+
+        const parsed = raw.map(row => {
+            const question = String(row.question || row.Question || "").trim();
+            const A = String(row.A || "").trim();
+            const B = String(row.B || "").trim();
+            const C = String(row.C || "").trim();
+            const D = String(row.D || "").trim();
+            const correctRaw = String(row.correct || row.Correct || "").trim().toUpperCase();
+
+            const map = { A:0, B:1, C:2, D:3 };
+
+            if(!question || !A || !B || !C || !D || map[correctRaw] === undefined){
+                return null;
+            }
+
+            return {
+                question: question,
+                options: [A, B, C, D],
+                correct: map[correctRaw]
+            };
+        }).filter(Boolean);
+
+        if(parsed.length < QUESTIONS_PER_EXAM){
+            return false;
+        }
+
+        allQuestions = parsed;
+        return true;
+    }catch(err){
+        console.error(err);
+        return false;
+    }
+}
+
+function studentLogin(){
+    main.innerHTML = `
+        <h2>ĐĂNG NHẬP THÍ SINH</h2>
+        <input id="nameInput" placeholder="Họ và tên">
+        <input id="unitInput" placeholder="Đơn vị">
+        <button onclick="startExam()">Bắt đầu thi</button>
+        <button onclick="home()">Quay lại</button>
+    `;
+}
+
+function startExam(){
+    userName = document.getElementById("nameInput").value.trim();
+    userUnit = document.getElementById("unitInput").value.trim();
+
+    if(!userName || !userUnit){
+        alert("Nhập đầy đủ họ tên và đơn vị");
+        return;
+    }
+
+    if(allQuestions.length < QUESTIONS_PER_EXAM){
+        alert("Chưa có bộ câu hỏi công khai hợp lệ. Hãy kiểm tra file questions.xlsx trên GitHub.");
+        return;
+    }
+
+    examQuestions = [...allQuestions].sort(() => Math.random() - 0.5).slice(0, QUESTIONS_PER_EXAM);
+    userAnswers = new Array(QUESTIONS_PER_EXAM).fill(null);
+
+    current = 0;
+    score = 0;
+    timeLeft = EXAM_TIME;
+    selectedAnswer = null;
+    startTime = Date.now();
+
+    renderQuestion();
+    startTimer();
+}
+
+function renderQuestion(){
+    const q = examQuestions[current];
+    const labels = ["A", "B", "C", "D"];
+
+    selectedAnswer = userAnswers[current];
+
+    let html = `
+        <div>
+            <strong>${userName} - ${userUnit}</strong> | 
+            <span id="timer"></span>
+        </div>
+        <h3>Câu ${current + 1}/${QUESTIONS_PER_EXAM}: ${q.question}</h3>
+    `;
+
+    q.options.forEach((opt, i) => {
+        const selectedClass = selectedAnswer === i ? "selected" : "";
+        html += `
+            <div class="option ${selectedClass}" id="opt${i}" onclick="selectAnswer(${i})">
+                <strong>${labels[i]}.</strong> ${opt}
+            </div>
+        `;
+    });
+
+    html += `<div class="nav-buttons">`;
+
+    if(current > 0){
+        html += `<button onclick="prevQuestion()">Câu trước</button>`;
+    }
+
+    if(current < QUESTIONS_PER_EXAM - 1){
+        html += `<button onclick="nextQuestion()">Tiếp</button>`;
+    }else{
+        html += `<button onclick="submitExam()">Nộp bài</button>`;
+    }
+
+    html += `</div>`;
+
+    main.innerHTML = html;
+    updateTimerDisplay();
+}
+
+function selectAnswer(i){
+    selectedAnswer = i;
+    userAnswers[current] = i;
+
+    document.querySelectorAll(".option").forEach(el => el.classList.remove("selected"));
+    const chosen = document.getElementById("opt" + i);
+    if(chosen) chosen.classList.add("selected");
+}
+
+function prevQuestion(){
+    current--;
+    renderQuestion();
+}
+
+function nextQuestion(){
+    if(userAnswers[current] === null){
+        alert("Chọn đáp án");
+        return;
+    }
+    current++;
+    renderQuestion();
+}
+
+function updateTimerDisplay(){
+    const t = document.getElementById("timer");
+    if(t){
+        t.textContent = "Thời gian: " + Math.floor(timeLeft / 60) + "m " + (timeLeft % 60) + "s";
+    }
+}
+
+function startTimer(){
+    clearInterval(timer);
+    timer = setInterval(() => {
+        timeLeft--;
+        updateTimerDisplay();
+        if(timeLeft <= 0){
+            submitExam(true);
+        }
+    }, 1000);
+}
+
+function submitExam(isTimeUp = false){
+    for(let i = 0; i < QUESTIONS_PER_EXAM; i++){
+        if(userAnswers[i] === null && !isTimeUp){
+            alert("Bạn chưa trả lời hết câu hỏi.");
+            current = i;
+            renderQuestion();
+            return;
+        }
+    }
+
+    finishExam();
+}
+
+async function finishExam(){
+    clearInterval(timer);
+
+    score = 0;
+    for(let i = 0; i < QUESTIONS_PER_EXAM; i++){
+        if(userAnswers[i] === examQuestions[i].correct){
+            score++;
+        }
+    }
+
+    const usedTime = Math.floor((Date.now() - startTime) / 1000);
+
+    const resultData = {
+        name: userName,
+        unit: userUnit,
+        correct: score,
+        score: score * 0.5,
+        time: usedTime,
+        submittedAt: new Date().toLocaleString("vi-VN"),
+        examCode: "PCCC-2026",
+        totalQuestions: QUESTIONS_PER_EXAM
+    };
+
+    const sent = await sendResultToServer(resultData);
+
+    main.innerHTML = `
+        <h2>KẾT QUẢ</h2>
+        <p><strong>${userName} - ${userUnit}</strong></p>
+        <p>Số câu đúng: ${score}/${QUESTIONS_PER_EXAM}</p>
+        <p>Điểm: ${score * 0.5}</p>
+        <div class="box ${sent ? 'ok' : 'warn'}">
+            ${sent ? 'Đã gửi kết quả lên hệ thống thành công.' : 'Chưa gửi được kết quả lên hệ thống. Kiểm tra lại SCRIPT_URL hoặc quyền Apps Script.'}
+        </div>
+        <button onclick="home()">Trang chủ</button>
+    `;
+}
+
+async function sendResultToServer(resultData){
+    try{
+        const response = await fetch(SCRIPT_URL, {
+            method: "POST",
+            headers: {
+                "Content-Type": "text/plain;charset=utf-8"
+            },
+            body: JSON.stringify(resultData)
+        });
+
+        const data = await response.json();
+        return !!data.success;
+    }catch(err){
+        console.error("sendResultToServer error:", err);
+        return false;
+    }
+}
+
+function adminLogin(){
+    const pass = prompt("Nhập mật khẩu quản trị:");
+    if(pass !== ADMIN_PASSWORD){
+        alert("Sai mật khẩu");
+        return;
+    }
+    adminPanel();
+}
+
+function adminPanel(){
+    main.innerHTML = `
+        <h2>QUẢN TRỊ HỆ THỐNG</h2>
+
+        <div class="box ok">
+            Số câu hỏi hiện có: <strong>${allQuestions.length}</strong><br>
+            Nguồn hiện tại: <strong>${questionSourceText}</strong>
+        </div>
+
+        <div class="box info">
+            Quản trị có thể xem kết quả tập trung từ tất cả thí sinh đã nộp bài.
+        </div>
+
+        <button onclick="refreshPublicQuestions()">Tải lại từ file công khai questions.xlsx</button>
+        <button onclick="viewResultsOnline()">Xem kết quả thí sinh</button>
+        <button onclick="document.getElementById('adminExcelPicker').click()">Nạp tạm file từ máy này</button>
+        <button onclick="resetQuestions()">Xóa cache câu hỏi máy này</button>
+        <button onclick="home()">Trang chủ</button>
+
+        <input type="file" id="adminExcelPicker" class="hidden" accept=".xlsx,.xls" onchange="handleManualExcel(event)">
+
+        <h3>Định dạng Excel bắt buộc</h3>
+        <table>
+            <tr>
+                <th>question</th>
+                <th>A</th>
+                <th>B</th>
+                <th>C</th>
+                <th>D</th>
+                <th>correct</th>
+            </tr>
+            <tr>
+                <td>Nội dung câu hỏi</td>
+                <td>Đáp án A</td>
+                <td>Đáp án B</td>
+                <td>Đáp án C</td>
+                <td>Đáp án D</td>
+                <td>A hoặc B hoặc C hoặc D</td>
+            </tr>
+        </table>
+    `;
+}
+
+function handleManualExcel(event){
+    const file = event.target.files[0];
+    if(!file){
+        alert("Bạn chưa chọn file Excel");
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = function(e){
+        const ok = parseExcelArrayBuffer(e.target.result);
+        if(ok){
+            questionSourceText = "File tạm nạp từ máy quản trị";
+            saveQuestionCache();
+            cachedQuestions = allQuestions;
+            alert("Đã nạp tạm file Excel thành công trên máy này: " + allQuestions.length + " câu hợp lệ");
+            adminPanel();
+        }else{
+            alert("File Excel không đúng định dạng hoặc chưa đủ 20 câu.");
+        }
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+async function refreshPublicQuestions(){
+    const ok = await loadPublicQuestions();
+    if(ok){
+        alert("Đã tải lại bộ câu hỏi thành công.");
+    }else{
+        alert("Không tải được file công khai questions.xlsx.");
+    }
+    adminPanel();
+}
+
+async function viewResultsOnline(){
+    main.innerHTML = `
+        <h2>KẾT QUẢ THÍ SINH</h2>
+        <div class="box info">Đang tải dữ liệu...</div>
+        <button onclick="adminPanel()">Quay lại</button>
+    `;
+
+    try{
+        const url = SCRIPT_URL + "?action=getResults&password=" + encodeURIComponent(ADMIN_PASSWORD) + "&t=" + Date.now();
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if(!data.success){
+            main.innerHTML = `
+                <h2>KẾT QUẢ THÍ SINH</h2>
+                <div class="box warn">${data.message || 'Không tải được kết quả'}</div>
+                <button onclick="adminPanel()">Quay lại</button>
+            `;
+            return;
+        }
+
+        let rows = data.data || [];
+
+        rows.sort((a,b) => {
+            const da = new Date(a.createdAt || 0).getTime();
+            const db = new Date(b.createdAt || 0).getTime();
+            return db - da;
+        });
+
+        let html = `
+            <h2>KẾT QUẢ THÍ SINH</h2>
+            <div class="box ok">Tổng số bài đã nộp: <strong>${rows.length}</strong></div>
+            <table>
+                <tr>
+                    <th>Thời gian nộp</th>
+                    <th>Họ tên</th>
+                    <th>Đơn vị</th>
+                    <th>Đúng</th>
+                    <th>Điểm</th>
+                    <th>Thời gian làm bài</th>
+                    <th>Mã kỳ thi</th>
+                </tr>
+        `;
+
+        rows.forEach(r => {
+            html += `
+                <tr>
+                    <td>${r.submittedAt || r.createdAt || ""}</td>
+                    <td>${r.name || ""}</td>
+                    <td>${r.unit || ""}</td>
+                    <td>${r.correct || ""}/${r.totalQuestions || QUESTIONS_PER_EXAM}</td>
+                    <td>${r.score || ""}</td>
+                    <td>${r.time || ""}s</td>
+                    <td>${r.examCode || ""}</td>
+                </tr>
+            `;
+        });
+
+        html += `
+            </table>
+            <button onclick="adminPanel()">Quay lại</button>
+        `;
+
+        main.innerHTML = html;
+    }catch(err){
+        console.error(err);
+        main.innerHTML = `
+            <h2>KẾT QUẢ THÍ SINH</h2>
+            <div class="box warn">Không kết nối được tới hệ thống lưu kết quả.</div>
+            <button onclick="adminPanel()">Quay lại</button>
+        `;
+    }
+}
+
+function resetQuestions(){
+    if(confirm("Xóa bộ câu hỏi cache trên máy này?")){
+        clearQuestionCache();
+        questionSourceText = "Chưa tải bộ câu hỏi";
+        alert("Đã xóa cache câu hỏi.");
+        adminPanel();
+    }
+}
+
+bootApp();
+</script>
+</body>
+</html>

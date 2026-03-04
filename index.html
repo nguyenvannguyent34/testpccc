@@ -86,7 +86,10 @@ button:hover{background:#8b0000;}
     border:2px solid #28a745;
     font-weight:bold;
 }
-#timer{color:red;font-weight:bold;}
+#timer{
+    color:red;
+    font-weight:bold;
+}
 table{
     width:100%;
     border-collapse:collapse;
@@ -158,7 +161,7 @@ th{
 <script>
 const ADMIN_PASSWORD = "101212019";
 const EXCEL_FILE = "questions.xlsx";
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwBAcXE4lTX5DeDlG4wed-xqTFkrRwdGTbhg_Og5tHYt09syBKvYYVnNJeFnqVAjjE2/exec";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyl_VcGKOCxQ2TrbcoRQ2mQcVyFek4tOFMtIfxRaU1JJflkdK87OPSIeRWtFO97gUjd/exec";
 const QUESTIONS_PER_EXAM = 20;
 const EXAM_TIME = 20 * 60;
 
@@ -344,12 +347,11 @@ function startExam(){
 function renderQuestion(){
     const q = examQuestions[current];
     const labels = ["A", "B", "C", "D"];
-
     selectedAnswer = userAnswers[current];
 
     let html = `
         <div>
-            <strong>${userName} - ${userUnit}</strong> | 
+            <strong>${userName} - ${userUnit}</strong> |
             <span id="timer"></span>
         </div>
         <h3>Câu ${current + 1}/${QUESTIONS_PER_EXAM}: ${q.question}</h3>
@@ -473,18 +475,63 @@ async function finishExam(){
     `;
 }
 
-async function sendResultToServer(resultData){
-    try{
-        const response = await fetch(SCRIPT_URL, {
-            method: "POST",
-            headers: {
-                "Content-Type": "text/plain;charset=utf-8"
-            },
-            body: JSON.stringify(resultData)
+function callScriptJsonp(params) {
+    return new Promise((resolve, reject) => {
+        const callbackName = "jsonp_cb_" + Date.now() + "_" + Math.floor(Math.random() * 100000);
+        const script = document.createElement("script");
+
+        const timeout = setTimeout(() => {
+            cleanup();
+            reject(new Error("Hết thời gian chờ phản hồi từ Apps Script"));
+        }, 15000);
+
+        function cleanup() {
+            clearTimeout(timeout);
+            if (script.parentNode) script.parentNode.removeChild(script);
+            try { delete window[callbackName]; } catch(e) {}
+        }
+
+        window[callbackName] = function(data) {
+            cleanup();
+            resolve(data);
+        };
+
+        const query = new URLSearchParams({
+            ...params,
+            prefix: callbackName,
+            _: Date.now()
         });
 
-        const data = await response.json();
-        return !!data.success;
+        script.src = SCRIPT_URL + "?" + query.toString();
+        script.onerror = function() {
+            cleanup();
+            reject(new Error("Không tải được Apps Script"));
+        };
+
+        document.body.appendChild(script);
+    });
+}
+
+async function sendResultToServer(resultData){
+    try{
+        const data = await callScriptJsonp({
+            action: "submitResult",
+            name: resultData.name,
+            unit: resultData.unit,
+            correct: resultData.correct,
+            score: resultData.score,
+            time: resultData.time,
+            submittedAt: resultData.submittedAt,
+            examCode: resultData.examCode,
+            totalQuestions: resultData.totalQuestions
+        });
+
+        if(!data || !data.success){
+            console.error("Apps Script response:", data);
+            return false;
+        }
+
+        return true;
     }catch(err){
         console.error("sendResultToServer error:", err);
         return false;
@@ -584,14 +631,15 @@ async function viewResultsOnline(){
     `;
 
     try{
-        const url = SCRIPT_URL + "?action=getResults&password=" + encodeURIComponent(ADMIN_PASSWORD) + "&t=" + Date.now();
-        const response = await fetch(url);
-        const data = await response.json();
+        const data = await callScriptJsonp({
+            action: "getResults",
+            password: ADMIN_PASSWORD
+        });
 
-        if(!data.success){
+        if(!data || !data.success){
             main.innerHTML = `
                 <h2>KẾT QUẢ THÍ SINH</h2>
-                <div class="box warn">${data.message || 'Không tải được kết quả'}</div>
+                <div class="box warn">${(data && data.message) ? data.message : "Không tải được kết quả"}</div>
                 <button onclick="adminPanel()">Quay lại</button>
             `;
             return;
@@ -662,6 +710,4 @@ function resetQuestions(){
 bootApp();
 </script>
 </body>
-
 </html>
-
